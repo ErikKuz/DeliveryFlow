@@ -1,0 +1,302 @@
+openapi: 3.1.0
+info:
+  title: DeliveryFlow Delivery API
+  version: 1.0.0
+  description: |
+    REST-контракт приёма заявки на доставку одной части заказа продавца.
+    На первом этапе клиентом служит заглушка MarketFlow. Создание заявки
+    не означает, что курьер уже физически получил товар.
+    Локальная учебная версия этапа 1 работает без авторизации.
+    Авторизация будет добавлена на этапе безопасности.
+servers:
+  - url: /
+    description: Относительный адрес; подходит для прямого вызова сервиса и для Gateway
+tags:
+  - name: Deliveries
+    description: Работа с доставками
+paths:
+  /api/v1/deliveries:
+    post:
+      tags:
+        - Deliveries
+      operationId: createDelivery
+      summary: Принять заявку на доставку
+      description: |
+        Одна доставка соответствует одному sellerOrderId из MarketFlow.
+        При первом запросе создаётся доставка в статусе WAITING_FOR_COURIER.
+        Повторный запрос с тем же sellerOrderId и теми же данными возвращает
+        созданную доставку. Если данные отличаются, возвращается 409.
+        Назначение курьера и фактическое получение товара происходят позже.
+      security: []
+      requestBody:
+        required: true
+        description: Снимок данных части заказа на момент передачи в логистику.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDeliveryRequest'
+            example:
+              orderId: 1001
+              sellerOrderId: 2001
+              sellerId: 77
+              pickupContact:
+                name: Анна Смирнова
+                phone: '+79990000001'
+              pickupAddress:
+                countryCode: RU
+                city: Самара
+                street: Молодогвардейская
+                building: '10'
+              recipient:
+                name: Иван Иванов
+                phone: '+79990000002'
+              deliveryAddress:
+                countryCode: RU
+                city: Самара
+                street: Ленинградская
+                building: '25'
+                apartment: '12'
+      responses:
+        '201':
+          description: Новая доставка создана.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryResponse'
+              example:
+                deliveryId: 550e8400-e29b-41d4-a716-446655440000
+                orderId: 1001
+                sellerOrderId: 2001
+                status: WAITING_FOR_COURIER
+                createdAt: '2026-09-29T12:00:00Z'
+                updatedAt: '2026-09-29T12:00:00Z'
+        '200':
+          description: Идемпотентный повтор; возвращена существующая доставка.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryResponse'
+        '400':
+          description: Неверный JSON или не прошла проверка полей.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              examples:
+                validation:
+                  summary: Ошибка проверки полей
+                  value:
+                    timestamp: '2026-10-10T12:00:00Z'
+                    status: 400
+                    code: Bad Request
+                    message: Validation failed for one or more fields
+                    path: /api/v1/deliveries
+                    validationErrors:
+                      - field: recipient.phone
+                        message: 'must match "^\+[1-9]\d{1,14}$"'
+                    traceId: null
+                invalidJson:
+                  summary: Неверный JSON, тип поля или отсутствующее тело запроса
+                  value:
+                    timestamp: '2026-10-10T12:00:00Z'
+                    status: 400
+                    code: INVALID_JSON
+                    message: Request body is missing or contains invalid JSON or field types
+                    path: /api/v1/deliveries
+                    validationErrors: null
+                    traceId: null
+        '409':
+          description: Для sellerOrderId уже есть доставка с другими исходными данными.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                timestamp: '2026-10-10T12:00:00Z'
+                status: 409
+                code: Conflict
+                message: Delivery with this ID already exists, but the information does not match the existing record.
+                path: /api/v1/deliveries
+                validationErrors: null
+                traceId: null
+        '503':
+          description: Сервис временно не может принять заявку из-за недоступности ресурсов БД, тайм-аута запроса или невозможности начать транзакцию.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                timestamp: '2026-10-10T12:00:00Z'
+                status: 503
+                code: SERVICE_UNAVAILABLE
+                message: Delivery service is temporarily unable to accept the request
+                path: /api/v1/deliveries
+                validationErrors: null
+                traceId: null
+components:
+  schemas:
+    CreateDeliveryRequest:
+      type: object
+      description: Данные заглушки MarketFlow; не является JPA Entity другого проекта.
+      required:
+        - orderId
+        - sellerOrderId
+        - sellerId
+        - pickupContact
+        - pickupAddress
+        - recipient
+        - deliveryAddress
+      properties:
+        orderId:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Идентификатор общего заказа MarketFlow.
+        sellerOrderId:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Идентификатор части заказа продавца; ключ идемпотентности создания.
+        sellerId:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Идентификатор продавца в MarketFlow.
+        pickupContact:
+          $ref: '#/components/schemas/Contact'
+        pickupAddress:
+          $ref: '#/components/schemas/Address'
+        recipient:
+          $ref: '#/components/schemas/Contact'
+        deliveryAddress:
+          $ref: '#/components/schemas/Address'
+    Contact:
+      type: object
+      required:
+        - name
+        - phone
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        phone:
+          type: string
+          pattern: '^\+[1-9]\d{1,14}$'
+          description: Телефон в международном формате E.164, например +79990000000.
+    Address:
+      type: object
+      required:
+        - countryCode
+        - city
+        - street
+        - building
+      properties:
+        countryCode:
+          type: string
+          pattern: '^[A-Z]{2}$'
+          description: Двухбуквенный код страны.
+        city:
+          type: string
+          minLength: 1
+          maxLength: 120
+        street:
+          type: string
+          minLength: 1
+          maxLength: 160
+        building:
+          type: string
+          minLength: 1
+          maxLength: 30
+        apartment:
+          type: [string, 'null']
+          maxLength: 30
+          description: Необязательное поле; допускаются строка, null или отсутствие поля.
+    DeliveryStatus:
+      type: string
+      description: Текущее состояние доставки, которым владеет delivery-service.
+      enum:
+        - CREATED
+        - WAITING_FOR_COURIER
+        - COURIER_ASSIGNED
+        - PICKED_UP
+        - IN_TRANSIT
+        - DELIVERED
+        - ASSIGNMENT_FAILED
+        - DELIVERY_FAILED
+        - CANCELLED
+    DeliveryResponse:
+      type: object
+      required:
+        - deliveryId
+        - orderId
+        - sellerOrderId
+        - status
+        - createdAt
+        - updatedAt
+      properties:
+        deliveryId:
+          type: string
+          format: uuid
+          description: Идентификатор доставки в DeliveryFlow.
+        orderId:
+          type: integer
+          format: int64
+          minimum: 1
+        sellerOrderId:
+          type: integer
+          format: int64
+          minimum: 1
+        status:
+          $ref: '#/components/schemas/DeliveryStatus'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ApiError:
+      type: object
+      required:
+        - timestamp
+        - status
+        - code
+        - message
+        - path
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: Время формирования ошибки.
+        status:
+          type: integer
+          description: HTTP-статус ответа.
+        code:
+          type: string
+          description: Машиночитаемый код ошибки.
+        message:
+          type: string
+          description: Краткое объяснение для клиента.
+        path:
+          type: string
+          description: URI запроса, при обработке которого возникла ошибка.
+        validationErrors:
+          type: [array, 'null']
+          description: Ошибки полей при валидации; для остальных обработанных ошибок возвращается null.
+          items:
+            $ref: '#/components/schemas/ValidationError'
+        traceId:
+          type: [string, 'null']
+          description: Идентификатор трассировки; в текущей реализации возвращается null.
+    ValidationError:
+      type: object
+      required:
+        - field
+        - message
+      properties:
+        field:
+          type: string
+          description: Путь к полю запроса, например recipient.phone.
+        message:
+          type: string
+          description: Сообщение о нарушенном ограничении поля.
