@@ -1,0 +1,683 @@
+openapi: 3.1.0
+info:
+  title: DeliveryFlow — этап 2, пункты и физический приём
+  version: 1.0.0-stage2-draft
+  description: |
+    Черновик следующей редакции учебного API. Этап разработки 2 не меняет
+    префикс URL /api/v1. Этот файл описывает планируемое поведение;
+    действующий код пока реализует контракт delivery-api.v1.yaml.
+
+    Продавец сам или через нанятого перевозчика доставляет товар в главный
+    московский пункт вне процессов DeliveryFlow. pickupAddress остаётся
+    снимком адреса продавца и не означает обещание забора нашим курьером.
+    Создание заявки регистрирует данные, но не подтверждает получение товара.
+    Физический приём отдельно подтверждает оператор московского пункта.
+
+    До приёма нельзя предлагать доставку курьеру или назначать её машине.
+    После приёма московская доставка готова к будущей последней миле,
+    региональная — к будущей перевозке. Назначения, рейсы, курьеры,
+    региональный приём, самовывоз, тарифы и выплаты сюда не входят.
+
+    В черновике приняты допущения: только RU; один пункт на обслуживаемый
+    город; неподдерживаемый город отклоняется до сохранения заявки.
+    Эти решения и новые имена статусов требуют обсуждения перед реализацией.
+    Данные старых заявок нельзя считать физически принятыми по их статусу
+    WAITING_FOR_COURIER. Способ перехода старых записей на эту модель
+    согласуется отдельно, до применения новой миграции.
+
+    Создание и чтение открыты только в рамках локальной учебной заглушки.
+    Подтверждение приёма требует Bearer-аутентификации и роли OPERATOR.
+    В этапе 2 OPERATOR означает оператора главного московского пункта.
+    Источник токенов и проверка полномочий должны быть определены до
+    реализации действия приёма. Swagger-описание само по себе не защищает API.
+x-stage: 2
+x-contract-status: draft
+x-decisions-to-confirm:
+  - Отказ 422 для нового запроса в неподдерживаемый город вместо ручной обработки.
+  - Один главный московский пункт и один региональный пункт на каждый обслуживаемый город.
+  - Новые статусы WAITING_FOR_ACCEPTANCE и ACCEPTED_AT_ORIGIN_HUB.
+  - Ограничение обоих адресов кодом страны RU.
+  - Строгая проверка лишних полей и запрет обязательных строк, состоящих только из пробелов.
+  - Источник Bearer-токенов, идентификатор сотрудника и серверная проверка роли OPERATOR.
+  - Переход существующих записей WAITING_FOR_COURIER на новую модель без выдуманного факта приёма.
+servers:
+  - url: /
+    description: Прямой вызов учебного delivery-service.
+security: []
+tags:
+  - name: Deliveries
+    description: Регистрация заявки и чтение её текущего состояния.
+  - name: Hubs
+    description: Справочник обслуживаемых логистических пунктов.
+  - name: Acceptance
+    description: Подтверждённый оператором физический приём в Москве.
+paths:
+  /api/v1/deliveries:
+    post:
+      tags: [Deliveries]
+      operationId: createDelivery
+      summary: Зарегистрировать заявку на доставку
+      description: |
+        Одна доставка соответствует одному sellerOrderId. Новый запрос
+        сохраняет исходные данные и создаёт WAITING_FOR_ACCEPTANCE.
+        acceptedAt и acceptedBy равны null: физический приём ещё не подтверждён.
+
+        Сервер выбирает originHubId главного московского пункта и
+        destinationHubId по deliveryAddress.city. Клиент не выбирает склад.
+        Для Москвы originHubId и destinationHubId совпадают. Для другого
+        обслуживаемого города назначается его единственный региональный пункт.
+        В этой модели наличие регионального пункта в справочнике означает
+        обслуживание направления из Москвы; отдельные рейсы ещё не создаются.
+
+        Для поиска города сервер удаляет пробелы по краям, сравнивает без
+        учёта регистра и считает ё и е эквивалентными. Например, « самара »
+        сопоставляется с «Самара». Алиасы, районы и нечёткий поиск не поддержаны.
+        Исходный адрес сохраняется как передан и не заменяется адресом пункта.
+        Если города нет в справочнике, ответ 422, доставка не создаётся.
+        Отсутствие единственного главного пункта — ошибка настройки, ответ 503.
+
+        Повтор с тем же sellerOrderId и теми же исходными данными возвращает
+        200 и текущее состояние существующей доставки, в том числе после
+        приёма. Сохранённые пункты и время приёма при повторе не изменяются.
+        Данные сравниваются как значения всех полей исходного запроса, а не
+        как JSON-строка. Отсутствующий apartment и null считаются одинаковыми;
+        остальные строки сравниваются точно. Нормализация города для поиска
+        пункта не делает разные исходные запросы одинаковыми.
+        Изменённые исходные данные для того же sellerOrderId дают 409.
+        Существующая запись проверяется до повторного выбора направления.
+
+        Два конкурентных запроса не создают две доставки: одинаковые данные
+        дают одну новую запись и возврат существующей, разные — конфликт.
+        Регистрация заявки не является физическим приёмом товара.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDeliveryRequest'
+            example:
+              orderId: 1001
+              sellerOrderId: 2001
+              sellerId: 77
+              pickupContact:
+                name: Анна Смирнова
+                phone: '+79990000001'
+              pickupAddress:
+                countryCode: RU
+                city: Самара
+                street: Молодогвардейская
+                building: '10'
+              recipient:
+                name: Иван Иванов
+                phone: '+79990000002'
+              deliveryAddress:
+                countryCode: RU
+                city: Самара
+                street: Ленинградская
+                building: '25'
+                apartment: '12'
+      responses:
+        '201':
+          description: Заявка зарегистрирована, физический приём ожидается.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryResponse'
+              example:
+                deliveryId: 550e8400-e29b-41d4-a716-446655440000
+                orderId: 1001
+                sellerOrderId: 2001
+                status: WAITING_FOR_ACCEPTANCE
+                originHubId: 11111111-1111-4111-8111-111111111111
+                destinationHubId: 22222222-2222-4222-8222-222222222222
+                acceptedAt: null
+                acceptedBy: null
+                createdAt: '2026-10-10T06:15:00Z'
+                updatedAt: '2026-10-10T06:15:00Z'
+        '200':
+          $ref: '#/components/responses/DeliveryState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: sellerOrderId уже связан с другими исходными данными.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                timestamp: '2026-10-10T06:16:00Z'
+                status: 409
+                code: DELIVERY_DATA_CONFLICT
+                message: Для sellerOrderId уже существует доставка с другими данными.
+                path: /api/v1/deliveries
+                validationErrors: null
+                traceId: null
+        '422':
+          description: Город получателя не обслуживается; запись не создаётся.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                timestamp: '2026-10-10T06:15:00Z'
+                status: 422
+                code: DESTINATION_NOT_SUPPORTED
+                message: Для указанного города нет обслуживаемого пункта.
+                path: /api/v1/deliveries
+                validationErrors: null
+                traceId: null
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/deliveries/{deliveryId}:
+    parameters:
+      - $ref: '#/components/parameters/DeliveryId'
+    get:
+      tags: [Deliveries]
+      operationId: getDelivery
+      summary: Получить текущее состояние доставки
+      description: |
+        Возвращает статус, выбранные пункты и факт московского приёма.
+        Например, до приёма acceptedAt равен null; после — времени
+        подтверждения оператором. Запрос не меняет состояние.
+      responses:
+        '200':
+          $ref: '#/components/responses/DeliveryState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/DeliveryNotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/hubs:
+    get:
+      tags: [Hubs]
+      operationId: listHubs
+      summary: Получить обслуживаемые логистические пункты
+      description: |
+        Возвращает небольшой настроенный справочник пунктов России.
+        Ровно один MAIN_MOSCOW находится в Москве. Для каждого другого
+        обслуживаемого города есть ровно один REGIONAL. Два пункта для
+        одного нормализованного названия города в этапе 2 не допускаются.
+        Идентификатор пункта постоянен. Адрес пункта — место работы
+        логистики, а не адрес самовывоза покупателя.
+        Добавление и изменение пунктов через REST в этот этап не входят.
+        Нарушение правил справочника является ошибкой настройки (503).
+      responses:
+        '200':
+          description: Настроенные обслуживаемые пункты.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HubListResponse'
+              example:
+                items:
+                  - hubId: 11111111-1111-4111-8111-111111111111
+                    name: Главный московский пункт
+                    type: MAIN_MOSCOW
+                    address:
+                      countryCode: RU
+                      city: Москва
+                      street: Складская
+                      building: '1'
+                  - hubId: 22222222-2222-4222-8222-222222222222
+                    name: Самарский логистический пункт
+                    type: REGIONAL
+                    address:
+                      countryCode: RU
+                      city: Самара
+                      street: Складская
+                      building: '2'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/deliveries/{deliveryId}/acceptance:
+    parameters:
+      - $ref: '#/components/parameters/DeliveryId'
+    post:
+      tags: [Acceptance]
+      operationId: confirmOriginAcceptance
+      summary: Подтвердить физический приём посылки в Москве
+      description: |
+        Оператор нашёл заявку по deliveryId, сопоставил её с посылкой
+        и подтверждает, что товар физически получен главным московским пунктом.
+        Тело содержит hubId места приёма, а не пункта назначения.
+        hubId должен существовать, иметь тип MAIN_MOSCOW и совпадать
+        с сохранённым originHubId доставки.
+
+        Сервер сначала проверяет токен и роль OPERATOR, затем данные команды.
+        Переданный hubId сам по себе не подтверждает права сотрудника.
+        acceptedBy сервер берёт из проверенной личности оператора,
+        acceptedAt устанавливает своим временем при первом подтверждении.
+        Клиент не передаёт сотрудника, время, новый статус или назначение.
+        Это время подтверждения приёма; задним числом событие не датируется.
+
+        Первое подтверждение атомарно переводит WAITING_FOR_ACCEPTANCE
+        в ACCEPTED_AT_ORIGIN_HUB и сохраняет acceptedAt, acceptedBy, updatedAt.
+        Статус, сотрудник и время должны сохраняться одной операцией.
+        Курьер, машина и рейс этим действием не назначаются.
+
+        Повтор для той же доставки и того же главного пункта возвращает 200
+        с первоначальными acceptedAt и acceptedBy, даже если повтор отправил
+        другой уполномоченный оператор. updatedAt от повтора не меняется.
+        Два конкурентных подтверждения сохраняют один факт: первый успешно
+        сохранивший запрос фиксирует сотрудника и время, второй получает
+        существующий результат. Повтор не имитирует вторую приёмку.
+        Другой существующий пункт даёт 409, неизвестный пункт — 404.
+      security:
+        - bearerAuth: []
+      x-required-role: OPERATOR
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptanceRequest'
+            example:
+              hubId: 11111111-1111-4111-8111-111111111111
+      responses:
+        '200':
+          $ref: '#/components/responses/DeliveryState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Bearer-токен отсутствует, недействителен или истёк.
+          headers:
+            WWW-Authenticate:
+              description: Схема аутентификации.
+              schema:
+                type: string
+                example: Bearer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                timestamp: '2026-10-11T10:20:00Z'
+                status: 401
+                code: UNAUTHORIZED
+                message: Требуется действительный Bearer-токен.
+                path: /api/v1/deliveries/550e8400-e29b-41d4-a716-446655440000/acceptance
+                validationErrors: null
+                traceId: null
+        '403':
+          description: У сотрудника нет роли оператора главного московского пункта.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                timestamp: '2026-10-11T10:20:00Z'
+                status: 403
+                code: FORBIDDEN
+                message: Подтверждать приём может только оператор московского пункта.
+                path: /api/v1/deliveries/550e8400-e29b-41d4-a716-446655440000/acceptance
+                validationErrors: null
+                traceId: null
+        '404':
+          description: Доставка или указанный пункт не найдены.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              examples:
+                deliveryMissing:
+                  value:
+                    timestamp: '2026-10-11T10:20:00Z'
+                    status: 404
+                    code: DELIVERY_NOT_FOUND
+                    message: Доставка не найдена.
+                    path: /api/v1/deliveries/550e8400-e29b-41d4-a716-446655440000/acceptance
+                    validationErrors: null
+                    traceId: null
+                hubMissing:
+                  value:
+                    timestamp: '2026-10-11T10:20:00Z'
+                    status: 404
+                    code: HUB_NOT_FOUND
+                    message: Логистический пункт не найден.
+                    path: /api/v1/deliveries/550e8400-e29b-41d4-a716-446655440000/acceptance
+                    validationErrors: null
+                    traceId: null
+        '409':
+          description: Приём заявлен в существующем пункте, который не является originHubId.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                timestamp: '2026-10-11T10:20:00Z'
+                status: 409
+                code: WRONG_ACCEPTANCE_HUB
+                message: На этапе 2 приём подтверждается только в исходном московском пункте.
+                path: /api/v1/deliveries/550e8400-e29b-41d4-a716-446655440000/acceptance
+                validationErrors: null
+                traceId: null
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Проверяемый сервером токен сотрудника. Формат и источник токенов
+        согласуются отдельно. Для acceptance необходима роль OPERATOR,
+        означающая в этапе 2 оператора главного московского пункта.
+  parameters:
+    DeliveryId:
+      name: deliveryId
+      in: path
+      required: true
+      description: Идентификатор заявки DeliveryFlow, используемый для поиска посылки при приёме.
+      schema:
+        type: string
+        format: uuid
+      example: 550e8400-e29b-41d4-a716-446655440000
+  schemas:
+    CreateDeliveryRequest:
+      type: object
+      additionalProperties: false
+      description: Снимок части заказа заглушки MarketFlow. Участвует в проверке повторов.
+      required: [orderId, sellerOrderId, sellerId, pickupContact, pickupAddress, recipient, deliveryAddress]
+      properties:
+        orderId:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Общий заказ MarketFlow, например 1001.
+        sellerOrderId:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Часть заказа продавца и ключ идемпотентности, например 2001.
+        sellerId:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Продавец, самостоятельно организующий передачу в Москву, например 77.
+        pickupContact:
+          $ref: '#/components/schemas/Contact'
+          description: Контакт продавца для связи по передаче товара.
+        pickupAddress:
+          $ref: '#/components/schemas/Address'
+          description: Адрес продавца; может быть вне Москвы. Не адрес логистического пункта.
+        recipient:
+          $ref: '#/components/schemas/Contact'
+          description: Человек, которому товар будет доставлен по адресу.
+        deliveryAddress:
+          $ref: '#/components/schemas/Address'
+          description: Адрес покупателя; city используется для выбора пункта назначения.
+    Contact:
+      type: object
+      additionalProperties: false
+      required: [name, phone]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+          pattern: '\S'
+          description: Имя, содержащее хотя бы один непробельный символ.
+        phone:
+          type: string
+          pattern: '^\+[1-9]\d{1,14}$'
+          description: Международный формат E.164, например +79990000000.
+    Address:
+      type: object
+      additionalProperties: false
+      required: [countryCode, city, street, building]
+      properties:
+        countryCode:
+          type: string
+          enum: [RU]
+          description: На этом этапе адреса только в России.
+        city:
+          type: string
+          minLength: 1
+          maxLength: 120
+          pattern: '\S'
+          description: Город. Для назначения требуется совпадение с настроенным справочником.
+        street:
+          type: string
+          minLength: 1
+          maxLength: 160
+          pattern: '\S'
+        building:
+          type: string
+          minLength: 1
+          maxLength: 30
+          pattern: '\S'
+        apartment:
+          type: [string, 'null']
+          maxLength: 30
+          description: Необязательно; отсутствие и null эквивалентны при проверке повтора.
+    DeliveryStatus:
+      type: string
+      description: |
+        WAITING_FOR_ACCEPTANCE — зарегистрированы данные, физический приём ещё не подтверждён.
+        ACCEPTED_AT_ORIGIN_HUB — оператор подтвердил приём в Москве.
+        Второй статус не подтверждает отправку в регион, наличие курьера
+        или вручение покупателю. Позднейшие этапы расширят модель отдельно.
+      enum: [WAITING_FOR_ACCEPTANCE, ACCEPTED_AT_ORIGIN_HUB]
+    DeliveryResponse:
+      type: object
+      additionalProperties: false
+      required: [deliveryId, orderId, sellerOrderId, status, originHubId, destinationHubId, acceptedAt, acceptedBy, createdAt, updatedAt]
+      properties:
+        deliveryId:
+          type: string
+          format: uuid
+          description: Постоянный идентификатор заявки в DeliveryFlow.
+        orderId:
+          type: integer
+          format: int64
+          minimum: 1
+        sellerOrderId:
+          type: integer
+          format: int64
+          minimum: 1
+        status:
+          $ref: '#/components/schemas/DeliveryStatus'
+        originHubId:
+          type: string
+          format: uuid
+          description: Главный московский пункт первого приёма; выбирает сервер при создании.
+        destinationHubId:
+          type: string
+          format: uuid
+          description: Пункт города покупателя. Для Москвы равен originHubId; для Самары — её пункту.
+        acceptedAt:
+          type: [string, 'null']
+          format: date-time
+          description: Серверное время первого подтверждения приёма; null до подтверждения.
+        acceptedBy:
+          type: [string, 'null']
+          minLength: 1
+          description: Проверенный идентификатор оператора, например operator-42; null до подтверждения.
+        createdAt:
+          type: string
+          format: date-time
+          description: Время регистрации заявки.
+        updatedAt:
+          type: string
+          format: date-time
+          description: Время последнего фактического изменения. Идемпотентные повторы его не меняют.
+      allOf:
+        - if:
+            properties:
+              status:
+                const: WAITING_FOR_ACCEPTANCE
+            required: [status]
+          then:
+            properties:
+              acceptedAt:
+                type: 'null'
+              acceptedBy:
+                type: 'null'
+        - if:
+            properties:
+              status:
+                const: ACCEPTED_AT_ORIGIN_HUB
+            required: [status]
+          then:
+            properties:
+              acceptedAt:
+                type: string
+              acceptedBy:
+                type: string
+    Hub:
+      type: object
+      additionalProperties: false
+      required: [hubId, name, type, address]
+      properties:
+        hubId:
+          type: string
+          format: uuid
+          description: Постоянный идентификатор пункта, на который ссылается доставка.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+          pattern: '\S'
+          description: Понятное имя, например Самарский логистический пункт.
+        type:
+          type: string
+          enum: [MAIN_MOSCOW, REGIONAL]
+          description: Главный московский или региональный пункт.
+        address:
+          $ref: '#/components/schemas/Address'
+          description: Адрес внутреннего склада; город задаёт обслуживаемое направление.
+    HubListResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Hub'
+    AcceptanceRequest:
+      type: object
+      additionalProperties: false
+      required: [hubId]
+      properties:
+        hubId:
+          type: string
+          format: uuid
+          description: Пункт фактического приёма; на этапе 2 только сохранённый originHubId.
+    ApiError:
+      type: object
+      additionalProperties: false
+      required: [timestamp, status, code, message, path]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        code:
+          type: string
+          description: Машиночитаемый код, например DESTINATION_NOT_SUPPORTED.
+        message:
+          type: string
+          description: Объяснение ошибки для клиента.
+        path:
+          type: string
+          description: URI запроса.
+        validationErrors:
+          type: [array, 'null']
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          description: Ошибки полей; для остальных ошибок null.
+        traceId:
+          type: [string, 'null']
+          description: Идентификатор трассировки, если настроен; иначе null.
+    ValidationError:
+      type: object
+      additionalProperties: false
+      required: [field, message]
+      properties:
+        field:
+          type: string
+          description: Путь к полю, например deliveryAddress.countryCode.
+        message:
+          type: string
+  responses:
+    DeliveryState:
+      description: Текущее состояние доставки; повторные команды возвращают сохранённый результат.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DeliveryResponse'
+          example:
+            deliveryId: 550e8400-e29b-41d4-a716-446655440000
+            orderId: 1001
+            sellerOrderId: 2001
+            status: ACCEPTED_AT_ORIGIN_HUB
+            originHubId: 11111111-1111-4111-8111-111111111111
+            destinationHubId: 22222222-2222-4222-8222-222222222222
+            acceptedAt: '2026-10-11T10:20:00Z'
+            acceptedBy: operator-42
+            createdAt: '2026-10-10T06:15:00Z'
+            updatedAt: '2026-10-11T10:20:00Z'
+    BadRequest:
+      description: Неверный JSON, лишние поля, неверный UUID или ошибка проверки полей.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          examples:
+            validation:
+              value:
+                timestamp: '2026-10-10T06:15:00Z'
+                status: 400
+                code: VALIDATION_FAILED
+                message: Проверьте поля запроса.
+                path: /api/v1/deliveries
+                validationErrors:
+                  - field: deliveryAddress.countryCode
+                    message: На этапе 2 допускается только RU.
+                traceId: null
+            invalidJson:
+              value:
+                timestamp: '2026-10-10T06:15:00Z'
+                status: 400
+                code: INVALID_JSON
+                message: Тело запроса отсутствует или содержит неверный JSON либо тип поля.
+                path: /api/v1/deliveries
+                validationErrors: null
+                traceId: null
+    DeliveryNotFound:
+      description: Заявка с таким deliveryId не найдена.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            timestamp: '2026-10-11T10:20:00Z'
+            status: 404
+            code: DELIVERY_NOT_FOUND
+            message: Доставка не найдена.
+            path: /api/v1/deliveries/550e8400-e29b-41d4-a716-446655440000
+            validationErrors: null
+            traceId: null
+    ServiceUnavailable:
+      description: |
+        Сервис временно не может обработать запрос из-за недоступности БД,
+        тайм-аута или некорректного справочника пунктов. Это не означает,
+        что город не обслуживается. При неизвестном результате изменения
+        клиент может безопасно повторить исходную команду.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            timestamp: '2026-10-11T10:20:00Z'
+            status: 503
+            code: SERVICE_UNAVAILABLE
+            message: Сервис временно не может обработать запрос.
+            path: /api/v1/deliveries
+            validationErrors: null
+            traceId: null
