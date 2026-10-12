@@ -95,4 +95,19 @@ public class GlobalRestExceptionHandler {
         );
         return new ResponseEntity<>(apiError, HttpStatus.valueOf(409));
     }
+
+    @ExceptionHandler(NotFoundOrderByIdException.class)
+    public ResponseEntity<ApiError> handleNotFoundOrderByIdException(NotFoundOrderByIdException ex,
+        HttpServletRequest request){
+            ApiError error = new ApiError(
+                Instant.now(),
+                HttpStatus.valueOf(404).value(),
+                "DELIVERY_NOT_FOUND",
+                ex.getMessage(),
+                request.getRequestURI(),
+                null,
+                null
+            );
+            return new ResponseEntity<>(error,HttpStatus.valueOf(404));
+    }
 }
