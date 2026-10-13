@@ -94,7 +94,19 @@ public class DeliveriesEntity {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 32)
     @Builder.Default
-    private DeliveryStatus status = DeliveryStatus.WAITING_FOR_COURIER;
+    private DeliveryStatus status = DeliveryStatus.WAITING_FOR_ACCEPTANCE;
+
+    @Column(name = "origin_hub_id", nullable = false)
+    private UUID originHubId;
+
+    @Column(name = "destination_hub_id", nullable = false)
+    private UUID destinationHubId;
+
+    @Column(name = "accepted_at")
+    private OffsetDateTime acceptedAt;
+
+    @Column(name = "accepted_by", length = 120)
+    private String acceptedBy;
 
     @Column(name = "courier_id")
     private UUID courierId;

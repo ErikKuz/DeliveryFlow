@@ -14,6 +14,7 @@ import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -29,7 +30,7 @@ public class GlobalRestExceptionHandler {
         ApiError apiError = new ApiError(
             Instant.now(),
             HttpStatus.BAD_REQUEST.value(),
-            HttpStatus.BAD_REQUEST.getReasonPhrase(),
+            "VALIDATION_FAILED",
             "Validation failed for one or more fields",
             request.getRequestURI(),
             ex.getBindingResult().getFieldErrors().stream()
@@ -57,6 +58,47 @@ public class GlobalRestExceptionHandler {
             null
         );
         return new ResponseEntity<>(apiError, HttpStatus.BAD_REQUEST);
+    }
+
+    @ExceptionHandler(InvalidOrderIdException.class)
+    public ResponseEntity<ApiError> handleInvalidOrderId(InvalidOrderIdException ex,
+        HttpServletRequest request
+    ) {
+        return error(HttpStatus.BAD_REQUEST, "INVALID_ORDER_ID", ex.getMessage(), request);
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiError> handlePathTypeMismatch(MethodArgumentTypeMismatchException ex,
+        HttpServletRequest request
+    ) {
+        if ("orderId".equals(ex.getName())) {
+            return error(HttpStatus.BAD_REQUEST, "INVALID_ORDER_ID",
+                "orderId должен быть положительным числом в диапазоне int64.", request);
+        }
+        return error(HttpStatus.BAD_REQUEST, "INVALID_PATH_PARAMETER",
+            "Неверный формат параметра пути.", request);
+    }
+
+    @ExceptionHandler(DestinationNotSupportedException.class)
+    public ResponseEntity<ApiError> handleDestinationNotSupported(DestinationNotSupportedException ex,
+        HttpServletRequest request
+    ) {
+        return error(HttpStatus.valueOf(422), "DESTINATION_NOT_SUPPORTED", ex.getMessage(), request);
+    }
+
+    @ExceptionHandler(HubConfigurationException.class)
+    public ResponseEntity<ApiError> handleHubConfiguration(HubConfigurationException ex,
+        HttpServletRequest request
+    ) {
+        return error(HttpStatus.SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE", ex.getMessage(), request);
+    }
+
+    private ResponseEntity<ApiError> error(HttpStatus status, String code, String message,
+        HttpServletRequest request
+    ) {
+        return ResponseEntity.status(status).body(new ApiError(
+            Instant.now(), status.value(), code, message, request.getRequestURI(), null, null
+        ));
     }
 
     @ExceptionHandler({
@@ -87,7 +129,7 @@ public class GlobalRestExceptionHandler {
         ApiError apiError = new ApiError(
             Instant.now(),
             HttpStatus.valueOf(409).value(),
-            HttpStatus.valueOf(409).getReasonPhrase(),
+            "DELIVERY_DATA_CONFLICT",
             ex.getMessage(),
             request.getRequestURI(),
             null,
@@ -96,9 +138,9 @@ public class GlobalRestExceptionHandler {
         return new ResponseEntity<>(apiError, HttpStatus.valueOf(409));
     }
 
-    @ExceptionHandler(NotFoundOrderByIdException.class)
-    public ResponseEntity<ApiError> handleNotFoundOrderByIdException(NotFoundOrderByIdException ex,
-        HttpServletRequest request){
+    @ExceptionHandler(NotFoundDeliveryOrderByIdException.class)
+    public ResponseEntity<ApiError> handleNotFoundDeliveryOrderByIdException
+    (NotFoundDeliveryOrderByIdException ex,HttpServletRequest request){
             ApiError error = new ApiError(
                 Instant.now(),
                 HttpStatus.valueOf(404).value(),
@@ -109,5 +151,20 @@ public class GlobalRestExceptionHandler {
                 null
             );
             return new ResponseEntity<>(error,HttpStatus.valueOf(404));
+    }
+
+    @ExceptionHandler(NotFountOrdedByOrderIdException.class)
+    public ResponseEntity<ApiError> handleNotFountOrdedByOrderIdException(
+        NotFountOrdedByOrderIdException exception,HttpServletRequest request){
+            ApiError apierror =new ApiError(
+                Instant.now(),
+                HttpStatus.NOT_FOUND.value(),
+                "ORDER_NOT_FOUND",
+                exception.getMessage(),
+                request.getRequestURI(),
+                null,
+                null
+            );
+            return new ResponseEntity<>(apierror,HttpStatus.valueOf(404));
     }
 }

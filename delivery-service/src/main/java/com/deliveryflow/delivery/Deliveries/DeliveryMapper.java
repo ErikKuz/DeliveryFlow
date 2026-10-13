@@ -7,7 +7,12 @@ public class DeliveryMapper {
             .deliveryId(entity.getId())
             .orderId(entity.getOrderId())
             .sellerOrderId(entity.getSellerOrderId())
+            .sellerId(entity.getSellerId())
             .status(entity.getStatus())
+            .originHubId(entity.getOriginHubId())
+            .destinationHubId(entity.getDestinationHubId())
+            .acceptedAt(entity.getAcceptedAt())
+            .acceptedBy(entity.getAcceptedBy())
             .createdAt(entity.getCreatedAt())
             .updatedAt(entity.getUpdatedAt())
             .build();
@@ -33,7 +38,7 @@ public class DeliveryMapper {
             .deliveryStreet(request.deliveryAddress().street())
             .deliveryBuilding(request.deliveryAddress().building())
             .deliveryApartment(request.deliveryAddress().apartment())
-
+            .status(DeliveryStatus.WAITING_FOR_ACCEPTANCE)
             .build();
 
     }
