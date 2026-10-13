@@ -1,0 +1,5 @@
+apis:
+  openapi/delivery-api.v1.yaml:
+    alias: deliveryflow-delivery-api
+  openapi/delivery-api.stage2.yaml:
+    alias: deliveryflow-2

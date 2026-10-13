@@ -1,35 +1,49 @@
 openapi: 3.1.0
 info:
-  title: DeliveryFlow — этап 2, пункты и физический приём
+  title: DeliveryFlow — этап 2, пункты и просмотр доставок заказа
   version: 1.0.0-stage2-draft
   description: |
     Черновик следующей редакции учебного API. Этап разработки 2 не меняет
-    префикс URL /api/v1. Этот файл описывает планируемое поведение;
-    действующий код пока реализует контракт delivery-api.v1.yaml.
+    префикс URL /api/v1. Здесь описано планируемое поведение; код ещё
+    не приведён к этой редакции. Сначала согласуется контракт, затем реализация.
+
+    Заглушка MarketFlow регистрирует одну доставку на часть заказа продавца.
+    Покупательский интерфейс читает подробности одной доставки или краткие
+    состояния всех зарегистрированных доставок по orderId. Список не содержит состав товаров, имена
+    продавцов или полный перечень частей заказа из MarketFlow.
 
     Продавец сам или через нанятого перевозчика доставляет товар в главный
     московский пункт вне процессов DeliveryFlow. pickupAddress остаётся
     снимком адреса продавца и не означает обещание забора нашим курьером.
     Создание заявки регистрирует данные, но не подтверждает получение товара.
-    Физический приём отдельно подтверждает оператор московского пункта.
+
+    Подтверждение физического приёма оператором отложено и не имеет REST-действия
+    в этой редакции. Новая заявка остаётся WAITING_FOR_ACCEPTANCE до будущего
+    подтверждения. Статус ACCEPTED_AT_ORIGIN_HUB и поля acceptedAt, acceptedBy
+    сохранены для будущего отслеживания; создание и чтение их не устанавливают.
+    Временное отображение принятой посылки допустимо только на явно обозначенных
+    тестовых данных. Регистрация и таймер не заменяют физический приём.
 
     До приёма нельзя предлагать доставку курьеру или назначать её машине.
-    После приёма московская доставка готова к будущей последней миле,
-    региональная — к будущей перевозке. Назначения, рейсы, курьеры,
-    региональный приём, самовывоз, тарифы и выплаты сюда не входят.
+    Назначения, рейсы, водители, курьеры, операторские действия, региональный
+    приём, самовывоз, тарифы и выплаты сюда не входят.
 
     В черновике приняты допущения: только RU; один пункт на обслуживаемый
     город; неподдерживаемый город отклоняется до сохранения заявки.
-    Эти решения и новые имена статусов требуют обсуждения перед реализацией.
-    Данные старых заявок нельзя считать физически принятыми по их статусу
-    WAITING_FOR_COURIER. Способ перехода старых записей на эту модель
-    согласуется отдельно, до применения новой миграции.
+    При миграции старые CREATED и WAITING_FOR_COURIER с обслуживаемым городом
+    переходят в WAITING_FOR_ACCEPTANCE: эти статусы не подтверждали приём.
+    Для других старых статусов или необслуживаемых городов миграция
+    останавливается и требует ручного разбора, сохраняя прежние данные.
+
+    Подробности одной доставки пока собираются из записи доставки и текущего
+    справочника пунктов при каждом чтении. Это временная особенность этой
+    редакции: показанные адреса пунктов могут измениться после регистрации,
+    тогда как их идентификаторы в ответе регистрации остаются сохранёнными.
 
     Создание и чтение открыты только в рамках локальной учебной заглушки.
-    Подтверждение приёма требует Bearer-аутентификации и роли OPERATOR.
-    В этапе 2 OPERATOR означает оператора главного московского пункта.
-    Источник токенов и проверка полномочий должны быть определены до
-    реализации действия приёма. Swagger-описание само по себе не защищает API.
+    Для реального кабинета нужно отдельно согласовать аутентификацию покупателя
+    и проверку его доступа к заказу. Знание orderId или deliveryId не подтверждает
+    принадлежность заказа. Эта редакция не описывает готовый защищённый кабинет.
 x-stage: 2
 x-contract-status: draft
 x-decisions-to-confirm:
@@ -38,8 +52,8 @@ x-decisions-to-confirm:
   - Новые статусы WAITING_FOR_ACCEPTANCE и ACCEPTED_AT_ORIGIN_HUB.
   - Ограничение обоих адресов кодом страны RU.
   - Строгая проверка лишних полей и запрет обязательных строк, состоящих только из пробелов.
-  - Источник Bearer-токенов, идентификатор сотрудника и серверная проверка роли OPERATOR.
-  - Переход существующих записей WAITING_FOR_COURIER на новую модель без выдуманного факта приёма.
+  - Аутентификация покупателя и проверка его права читать доставки своего заказа.
+  - Переход подробного чтения доставки на сохранённые назначения пунктов.
 servers:
   - url: /
     description: Прямой вызов учебного delivery-service.
@@ -49,8 +63,8 @@ tags:
     description: Регистрация заявки и чтение её текущего состояния.
   - name: Hubs
     description: Справочник обслуживаемых логистических пунктов.
-  - name: Acceptance
-    description: Подтверждённый оператором физический приём в Москве.
+  - name: Orders
+    description: Чтение зарегистрированных доставок частей заказа покупателя.
 paths:
   /api/v1/deliveries:
     post:
@@ -127,6 +141,7 @@ paths:
                 deliveryId: 550e8400-e29b-41d4-a716-446655440000
                 orderId: 1001
                 sellerOrderId: 2001
+                sellerId: 77
                 status: WAITING_FOR_ACCEPTANCE
                 originHubId: 11111111-1111-4111-8111-111111111111
                 destinationHubId: 22222222-2222-4222-8222-222222222222
@@ -176,12 +191,18 @@ paths:
       operationId: getDelivery
       summary: Получить текущее состояние доставки
       description: |
-        Возвращает статус, выбранные пункты и факт московского приёма.
-        Например, до приёма acceptedAt равен null; после — времени
-        подтверждения оператором. Запрос не меняет состояние.
+        Возвращает текущий статус, адрес и контакт получателя, главный
+        московский пункт и пункт города получателя. Сервис при каждом чтении
+        заново ищет пункты в текущем справочнике по типу и нормализованному
+        городу адреса доставки. Это временное поведение текущего кода:
+        показанный адрес пункта может отличаться от того, что был при
+        регистрации, если справочник изменился. Сохранённые идентификаторы
+        назначенных пунктов и время приёма этим ответом не выдаются.
+        Отсутствие ожидаемого пункта в справочнике даёт 503.
+        Запрос не меняет состояние доставки.
       responses:
         '200':
-          $ref: '#/components/responses/DeliveryState'
+          $ref: '#/components/responses/DeliveryDetailsState'
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -229,149 +250,105 @@ paths:
                       building: '2'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
-  /api/v1/deliveries/{deliveryId}/acceptance:
+  /api/v1/orders/{orderId}/deliveries:
     parameters:
-      - $ref: '#/components/parameters/DeliveryId'
-    post:
-      tags: [Acceptance]
-      operationId: confirmOriginAcceptance
-      summary: Подтвердить физический приём посылки в Москве
+      - $ref: '#/components/parameters/OrderId'
+    get:
+      tags: [Orders]
+      operationId: listOrderDeliveries
+      summary: Получить доставки всех зарегистрированных частей заказа
       description: |
-        Оператор нашёл заявку по deliveryId, сопоставил её с посылкой
-        и подтверждает, что товар физически получен главным московским пунктом.
-        Тело содержит hubId места приёма, а не пункта назначения.
-        hubId должен существовать, иметь тип MAIN_MOSCOW и совпадать
-        с сохранённым originHubId доставки.
+        Покупательский интерфейс передаёт общий orderId из MarketFlow.
+        Сервер читает все сохранённые доставки с этим orderId. Каждая запись
+        соответствует одному sellerOrderId и имеет собственный status;
+        sellerId позволяет различать продавцов. orderId каждой записи
+        совпадает с параметром пути и orderId верхнего уровня ответа.
 
-        Сервер сначала проверяет токен и роль OPERATOR, затем данные команды.
-        Переданный hubId сам по себе не подтверждает права сотрудника.
-        acceptedBy сервер берёт из проверенной личности оператора,
-        acceptedAt устанавливает своим временем при первом подтверждении.
-        Клиент не передаёт сотрудника, время, новый статус или назначение.
-        Это время подтверждения приёма; задним числом событие не датируется.
+        items отсортирован по sellerOrderId по возрастанию. Для небольшого
+        списка частей одного заказа в этой редакции пагинация не предусмотрена.
+        Запрос только читает данные: он не создаёт заказ или доставку,
+        не подтверждает приём и не меняет статусы.
 
-        Первое подтверждение атомарно переводит WAITING_FOR_ACCEPTANCE
-        в ACCEPTED_AT_ORIGIN_HUB и сохраняет acceptedAt, acceptedBy, updatedAt.
-        Статус, сотрудник и время должны сохраняться одной операцией.
-        Курьер, машина и рейс этим действием не назначаются.
+        Список содержит только доставки, уже зарегистрированные в DeliveryFlow.
+        Он не гарантирует, что MarketFlow передал все части заказа. Общий статус
+        заказа, состав товаров, имена продавцов и общее число ожидаемых частей
+        не возвращаются: DeliveryFlow не располагает этими сведениями.
 
-        Повтор для той же доставки и того же главного пункта возвращает 200
-        с первоначальными acceptedAt и acceptedBy, даже если повтор отправил
-        другой уполномоченный оператор. updatedAt от повтора не меняется.
-        Два конкурентных подтверждения сохраняют один факт: первый успешно
-        сохранивший запрос фиксирует сотрудника и время, второй получает
-        существующий результат. Повтор не имитирует вторую приёмку.
-        Другой существующий пункт даёт 409, неизвестный пункт — 404.
-      security:
-        - bearerAuth: []
-      x-required-role: OPERATOR
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AcceptanceRequest'
-            example:
-              hubId: 11111111-1111-4111-8111-111111111111
+        Если записей нет, возвращается 200 с переданным orderId и items: [].
+        Это означает «зарегистрированные доставки пока не найдены», а не
+        «заказ не существует». Полный каталог заказов MarketFlow не проверяется,
+        поэтому 404 для отсутствия доставок здесь не используется.
+
+        orderId должен быть положительным целым числом в диапазоне int64.
+        Неверный формат, ноль, отрицательное значение или переполнение дают 400.
+        Доступ открыт только для локальной учебной заглушки; проверка
+        принадлежности заказа покупателю должна быть согласована отдельно.
       responses:
         '200':
-          $ref: '#/components/responses/DeliveryState'
+          description: Зарегистрированные доставки частей заказа; список может быть пустым.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderDeliveriesResponse'
+              examples:
+                registeredParts:
+                  summary: Две части одного заказа от разных продавцов
+                  value:
+                    orderId: 1001
+                    items:
+                      - deliveryId: 550e8400-e29b-41d4-a716-446655440000
+                        orderId: 1001
+                        sellerOrderId: 2001
+                        sellerId: 77
+                        status: WAITING_FOR_ACCEPTANCE
+                        originHubId: 11111111-1111-4111-8111-111111111111
+                        destinationHubId: 22222222-2222-4222-8222-222222222222
+                        acceptedAt: null
+                        acceptedBy: null
+                        createdAt: '2026-10-10T06:15:00Z'
+                        updatedAt: '2026-10-10T06:15:00Z'
+                      - deliveryId: 550e8400-e29b-41d4-a716-446655440001
+                        orderId: 1001
+                        sellerOrderId: 2002
+                        sellerId: 88
+                        status: WAITING_FOR_ACCEPTANCE
+                        originHubId: 11111111-1111-4111-8111-111111111111
+                        destinationHubId: 22222222-2222-4222-8222-222222222222
+                        acceptedAt: null
+                        acceptedBy: null
+                        createdAt: '2026-10-10T06:16:00Z'
+                        updatedAt: '2026-10-10T06:16:00Z'
+                noRegisteredDeliveries:
+                  summary: Доставки частей заказа ещё не зарегистрированы
+                  value:
+                    orderId: 1001
+                    items: []
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          description: Bearer-токен отсутствует, недействителен или истёк.
-          headers:
-            WWW-Authenticate:
-              description: Схема аутентификации.
-              schema:
-                type: string
-                example: Bearer
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-              example:
-                timestamp: '2026-10-11T10:20:00Z'
-                status: 401
-                code: UNAUTHORIZED
-                message: Требуется действительный Bearer-токен.
-                path: /api/v1/deliveries/550e8400-e29b-41d4-a716-446655440000/acceptance
-                validationErrors: null
-                traceId: null
-        '403':
-          description: У сотрудника нет роли оператора главного московского пункта.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-              example:
-                timestamp: '2026-10-11T10:20:00Z'
-                status: 403
-                code: FORBIDDEN
-                message: Подтверждать приём может только оператор московского пункта.
-                path: /api/v1/deliveries/550e8400-e29b-41d4-a716-446655440000/acceptance
-                validationErrors: null
-                traceId: null
-        '404':
-          description: Доставка или указанный пункт не найдены.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-              examples:
-                deliveryMissing:
-                  value:
-                    timestamp: '2026-10-11T10:20:00Z'
-                    status: 404
-                    code: DELIVERY_NOT_FOUND
-                    message: Доставка не найдена.
-                    path: /api/v1/deliveries/550e8400-e29b-41d4-a716-446655440000/acceptance
-                    validationErrors: null
-                    traceId: null
-                hubMissing:
-                  value:
-                    timestamp: '2026-10-11T10:20:00Z'
-                    status: 404
-                    code: HUB_NOT_FOUND
-                    message: Логистический пункт не найден.
-                    path: /api/v1/deliveries/550e8400-e29b-41d4-a716-446655440000/acceptance
-                    validationErrors: null
-                    traceId: null
-        '409':
-          description: Приём заявлен в существующем пункте, который не является originHubId.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-              example:
-                timestamp: '2026-10-11T10:20:00Z'
-                status: 409
-                code: WRONG_ACCEPTANCE_HUB
-                message: На этапе 2 приём подтверждается только в исходном московском пункте.
-                path: /api/v1/deliveries/550e8400-e29b-41d4-a716-446655440000/acceptance
-                validationErrors: null
-                traceId: null
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 components:
-  securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      description: |
-        Проверяемый сервером токен сотрудника. Формат и источник токенов
-        согласуются отдельно. Для acceptance необходима роль OPERATOR,
-        означающая в этапе 2 оператора главного московского пункта.
   parameters:
     DeliveryId:
       name: deliveryId
       in: path
       required: true
-      description: Идентификатор заявки DeliveryFlow, используемый для поиска посылки при приёме.
+      description: Идентификатор одной доставки DeliveryFlow для чтения её состояния.
       schema:
         type: string
         format: uuid
       example: 550e8400-e29b-41d4-a716-446655440000
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      description: Общий идентификатор заказа MarketFlow; положительное число, а не UUID доставки.
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+        maximum: 9223372036854775807
+      example: 1001
   schemas:
     CreateDeliveryRequest:
       type: object
@@ -455,13 +432,14 @@ components:
       description: |
         WAITING_FOR_ACCEPTANCE — зарегистрированы данные, физический приём ещё не подтверждён.
         ACCEPTED_AT_ORIGIN_HUB — оператор подтвердил приём в Москве.
+        Действие подтверждения отложено; эта редакция API не выполняет переход.
         Второй статус не подтверждает отправку в регион, наличие курьера
         или вручение покупателю. Позднейшие этапы расширят модель отдельно.
       enum: [WAITING_FOR_ACCEPTANCE, ACCEPTED_AT_ORIGIN_HUB]
     DeliveryResponse:
       type: object
       additionalProperties: false
-      required: [deliveryId, orderId, sellerOrderId, status, originHubId, destinationHubId, acceptedAt, acceptedBy, createdAt, updatedAt]
+      required: [deliveryId, orderId, sellerOrderId, sellerId, status, originHubId, destinationHubId, acceptedAt, acceptedBy, createdAt, updatedAt]
       properties:
         deliveryId:
           type: string
@@ -475,6 +453,11 @@ components:
           type: integer
           format: int64
           minimum: 1
+        sellerId:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Идентификатор продавца из MarketFlow для различения частей заказа; не имя продавца.
         status:
           $ref: '#/components/schemas/DeliveryStatus'
         originHubId:
@@ -492,6 +475,7 @@ components:
         acceptedBy:
           type: [string, 'null']
           minLength: 1
+          maxLength: 120
           description: Проверенный идентификатор оператора, например operator-42; null до подтверждения.
         createdAt:
           type: string
@@ -524,6 +508,61 @@ components:
                 type: string
               acceptedBy:
                 type: string
+    OrderDeliveriesResponse:
+      type: object
+      additionalProperties: false
+      description: |
+        Зарегистрированные доставки частей одного заказа. Не содержит общего
+        статуса или подтверждения полноты заказа MarketFlow. Каждая доставка
+        в items имеет тот же orderId, что и верхний уровень ответа.
+      required: [orderId, items]
+      properties:
+        orderId:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775807
+          description: Идентификатор заказа из параметра пути, включая ответ с пустым списком.
+        items:
+          type: array
+          minItems: 0
+          description: Доставки частей заказа, отсортированные по sellerOrderId по возрастанию.
+          items:
+            $ref: '#/components/schemas/DeliveryResponse'
+    DeliveryDetailsResponse:
+      type: object
+      additionalProperties: false
+      description: Подробности доставки в фактической форме InfoAboutDeliveryOrder.
+      required: [deliveryId, orderId, sellerOrderId, status, AddressMainHub, AddressdestinationHub, receipent]
+      properties:
+        deliveryId:
+          type: string
+          format: uuid
+        orderId:
+          type: integer
+          format: int64
+          minimum: 1
+        sellerOrderId:
+          type: integer
+          format: int64
+          minimum: 1
+        status:
+          $ref: '#/components/schemas/DeliveryStatus'
+        AddressMainHub:
+          $ref: '#/components/schemas/Hub'
+        AddressdestinationHub:
+          $ref: '#/components/schemas/Hub'
+        receipent:
+          $ref: '#/components/schemas/DeliveryRecipient'
+    DeliveryRecipient:
+      type: object
+      additionalProperties: false
+      required: [address, contact]
+      properties:
+        address:
+          $ref: '#/components/schemas/Address'
+        contact:
+          $ref: '#/components/schemas/Contact'
     Hub:
       type: object
       additionalProperties: false
@@ -556,15 +595,6 @@ components:
           minItems: 1
           items:
             $ref: '#/components/schemas/Hub'
-    AcceptanceRequest:
-      type: object
-      additionalProperties: false
-      required: [hubId]
-      properties:
-        hubId:
-          type: string
-          format: uuid
-          description: Пункт фактического приёма; на этапе 2 только сохранённый originHubId.
     ApiError:
       type: object
       additionalProperties: false
@@ -606,7 +636,7 @@ components:
           type: string
   responses:
     DeliveryState:
-      description: Текущее состояние доставки; повторные команды возвращают сохранённый результат.
+      description: Текущее состояние доставки; чтение и повторная регистрация возвращают сохранённые данные.
       content:
         application/json:
           schema:
@@ -615,15 +645,57 @@ components:
             deliveryId: 550e8400-e29b-41d4-a716-446655440000
             orderId: 1001
             sellerOrderId: 2001
-            status: ACCEPTED_AT_ORIGIN_HUB
+            sellerId: 77
+            status: WAITING_FOR_ACCEPTANCE
             originHubId: 11111111-1111-4111-8111-111111111111
             destinationHubId: 22222222-2222-4222-8222-222222222222
-            acceptedAt: '2026-10-11T10:20:00Z'
-            acceptedBy: operator-42
+            acceptedAt: null
+            acceptedBy: null
             createdAt: '2026-10-10T06:15:00Z'
-            updatedAt: '2026-10-11T10:20:00Z'
+            updatedAt: '2026-10-10T06:15:00Z'
+    DeliveryDetailsState:
+      description: Подробности одной доставки; пункты взяты из текущего справочника.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DeliveryDetailsResponse'
+          example:
+            deliveryId: 550e8400-e29b-41d4-a716-446655440000
+            orderId: 1001
+            sellerOrderId: 2001
+            status: WAITING_FOR_ACCEPTANCE
+            AddressMainHub:
+              hubId: 11111111-1111-4111-8111-111111111111
+              name: Главный московский пункт
+              type: MAIN_MOSCOW
+              address:
+                countryCode: RU
+                city: Москва
+                street: Тверская
+                building: '1'
+                apartment: null
+            AddressdestinationHub:
+              hubId: 22222222-2222-4222-8222-222222222222
+              name: Самарский логистический пункт
+              type: REGIONAL
+              address:
+                countryCode: RU
+                city: Самара
+                street: Ленинградская
+                building: '1'
+                apartment: null
+            receipent:
+              address:
+                countryCode: RU
+                city: Самара
+                street: Ленинградская
+                building: '25'
+                apartment: '12'
+              contact:
+                name: Иван Иванов
+                phone: '+79990000002'
     BadRequest:
-      description: Неверный JSON, лишние поля, неверный UUID или ошибка проверки полей.
+      description: Неверный JSON, лишние поля, неверный UUID, недопустимый orderId или ошибка проверки полей.
       content:
         application/json:
           schema:
@@ -639,6 +711,16 @@ components:
                 validationErrors:
                   - field: deliveryAddress.countryCode
                     message: На этапе 2 допускается только RU.
+                traceId: null
+            invalidOrderId:
+              summary: orderId не является положительным целым числом int64
+              value:
+                timestamp: '2026-10-10T06:15:00Z'
+                status: 400
+                code: INVALID_ORDER_ID
+                message: orderId должен быть положительным целым числом в диапазоне int64.
+                path: /api/v1/orders/abc/deliveries
+                validationErrors: null
                 traceId: null
             invalidJson:
               value:
